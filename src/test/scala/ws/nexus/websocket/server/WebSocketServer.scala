@@ -31,11 +31,11 @@ object WebSocketServer {
 
   def start(){
     plainServer = bootstrap()
-    plainServer.setPipelineFactory( new PlainWebSocketServerPipelineFactory() )
+    plainServer.setPipelineFactory( new WebSocketServerPipelineFactory( false ) )
     plainServer.bind(new InetSocketAddress( "0.0.0.0", 8080 ))
 
     secureServer = bootstrap()
-    secureServer.setPipelineFactory( new SecureWebSocketServerPipelineFactory() )
+    secureServer.setPipelineFactory( new WebSocketServerPipelineFactory( true ) )
     secureServer.bind(new InetSocketAddress( "0.0.0.0", 8443 ))
   }
 
@@ -46,7 +46,6 @@ object WebSocketServer {
     secureServer.releaseExternalResources()
     secureServer = null
   }
-
 }
 
 object SSLContextBuilder {
@@ -54,8 +53,8 @@ object SSLContextBuilder {
     val keypass = "changeme".toCharArray
 
     val keyStore = KeyStore.getInstance("JKS")
-    val ksFile = new File("./keystore/keystore.jks")
-    keyStore.load(new FileInputStream(ksFile), keypass);
+
+    keyStore.load( getClass.getResourceAsStream( "/keystore.jks" ), keypass)
 
     val trustFactory = TrustManagerFactory.getInstance("SunX509")
     trustFactory.init(keyStore)
@@ -73,47 +72,36 @@ object SSLContextBuilder {
 }
 
 
-class PlainWebSocketServerPipelineFactory extends ChannelPipelineFactory {
+class WebSocketServerPipelineFactory( secure:Boolean ) extends ChannelPipelineFactory {
   def getPipeline() = {
 
     val pipeline = Channels.pipeline()
+
+    if( secure ){
+      val engine = SSLContextBuilder.context.createSSLEngine
+      engine.setUseClientMode(false);
+      pipeline.addLast("ssl", new SslHandler(engine))
+    }
 
     pipeline.addLast("decoder", new HttpRequestDecoder());
     pipeline.addLast("aggregator", new HttpChunkAggregator(1024 * 4))
     pipeline.addLast("encoder", new HttpResponseEncoder())
 
-    // and then business logic.
-    pipeline.addLast("handler",  new WebSocketServerHandler() )
+    pipeline.addLast("handler",  new WebSocketServerHandler( false ) )
     pipeline
   }
 }
 
-class SecureWebSocketServerPipelineFactory extends ChannelPipelineFactory  {
-  def getPipeline() = {
 
-    val pipeline = Channels.pipeline()
-
-    val engine = SSLContextBuilder.context.createSSLEngine
-    engine.setUseClientMode(false);
-
-    pipeline.addLast("ssl", new SslHandler(engine))
-
-    pipeline.addLast("decoder", new HttpRequestDecoder());
-    pipeline.addLast("aggregator", new HttpChunkAggregator(1024 * 4))
-    pipeline.addLast("encoder", new HttpResponseEncoder())
-
-    // and then business logic.
-    pipeline.addLast("handler",  new WebSocketServerHandler() )
-    pipeline
-  }
-}
 
 @ChannelHandler.Sharable
-class WebSocketServerHandler extends SimpleChannelUpstreamHandler {
+class WebSocketServerHandler( secure:Boolean ) extends SimpleChannelUpstreamHandler {
   var handshaker:WebSocketServerHandshaker = _
 
-  private def getWebSocketLocation(req: HttpRequest) = "wss://" + req.getHeader(HttpHeaders.Names.HOST) + req.getUri
-  //private def getWebSocketLocation(req: HttpRequest) = "ws://" + req.getHeader(HttpHeaders.Names.HOST) + req.getUri
+  private def getWebSocketLocation(req: HttpRequest) = {
+    val protocol = if( secure ) "wss" else "ws"
+    protocol + "://"+ req.getHeader(HttpHeaders.Names.HOST) + req.getUri
+  }
 
   override def channelDisconnected( ctx:ChannelHandlerContext , e:ChannelStateEvent ){
     ctx.getChannel.close()
@@ -127,7 +115,6 @@ class WebSocketServerHandler extends SimpleChannelUpstreamHandler {
 
   }
   private def handleWebSocketFrame( ctx:ChannelHandlerContext, frame:WebSocketFrame ) {
-
     frame match {
       case frame:CloseWebSocketFrame =>
         handshaker.close(ctx.getChannel(), frame )
@@ -136,7 +123,8 @@ class WebSocketServerHandler extends SimpleChannelUpstreamHandler {
         ctx.getChannel().write( new PongWebSocketFrame( frame.getBinaryData() ) )
 
       case frame:TextWebSocketFrame =>
-        // TODO:Implemt text websocket
+        ctx.getChannel().write( new TextWebSocketFrame( frame.getText().toLowerCase() ) )
+
 
       case _ =>
         throw new UnsupportedOperationException(String.format("%s frame types not supported", frame.getClass().getName()))
@@ -146,6 +134,7 @@ class WebSocketServerHandler extends SimpleChannelUpstreamHandler {
 
 
   private def handleHttpRequest(ctx: ChannelHandlerContext, req: HttpRequest) {
+
     if( req.getMethod() == GET  ) {
       // Handshake
       val wsFactory = new WebSocketServerHandshakerFactory( getWebSocketLocation(req), null, false )
@@ -158,6 +147,7 @@ class WebSocketServerHandler extends SimpleChannelUpstreamHandler {
       }
     }
   }
+
 
 
   override def exceptionCaught( ctx: ChannelHandlerContext, e: ExceptionEvent) {
