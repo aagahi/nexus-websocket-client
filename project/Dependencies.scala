@@ -10,6 +10,8 @@ object Dependencies {
 
   object V {
     val netty       = "3.3.1.Final"
+    val slf4j       = "1.6.1"
+    val logback     = "0.9.29"
   }
 
   object Compile {

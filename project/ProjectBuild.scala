@@ -17,7 +17,7 @@ object ProjectBuild extends Build {
   )
 
 
-  lazy val root = Project("pubsub-service", file("."))
+  lazy val root = Project("websocket-client", file("."))
     .settings(basicSettings: _*)
     .settings(
     libraryDependencies ++= Seq(

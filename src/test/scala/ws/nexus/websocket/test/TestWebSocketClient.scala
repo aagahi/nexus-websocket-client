@@ -10,11 +10,9 @@ class TestWebSocketClient extends Specification  {
   override def map(fs: =>Fragments) = Step( startService ) ^ is ^ Step( stopService )
 
   def is =
-    "json ws message serializer should"                 ^
-      "de/serialize profile data"                       ! deAndSerializeProfile ^
-      "deserialize profile data string"                 ! deserializeProfile ^
-      "de/serialize Coordinate data"                        ! deAndSerializeLatLng
-
+    "Websocket client should"                                 ^
+      "connect to websocket server using plain connection"    ! plainConnect ^
+      "connect to websocket server using secure connection"   ! secureConnect
 
 
   def startService {
@@ -24,15 +22,11 @@ class TestWebSocketClient extends Specification  {
     WebSocketServer.stop()
   }
 
-  def deAndSerializeProfile= {
+  def plainConnect= {
     success
   }
 
-  def deserializeProfile = {
-    success
-  }
-
-  def deAndSerializeLatLng = {
+  def secureConnect = {
     success
   }
 
