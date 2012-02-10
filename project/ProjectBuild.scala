@@ -11,8 +11,9 @@ object ProjectBuild extends Build {
     name := "websocket-client",
     version := "0.1",
     description := "Nexus WS client",
-    scalaVersion := "2.9.1",
     scalacOptions := Seq("-deprecation", "-encoding", "utf8"),
+    scalaVersion := "2.9.1",
+    crossScalaVersions := Seq("2.8.2", "2.9.1"),
     resolvers ++= Dependencies.resolutionRepos
   )
 
@@ -22,11 +23,17 @@ object ProjectBuild extends Build {
     .settings(
     libraryDependencies ++= Seq(
       Compile.netty,
-      Test.specs2,
-      Test.specs2Scalaz,
       Test.junit,
       Runtime.logback
+    ) )
+    .settings(
+      libraryDependencies <<= (scalaVersion, libraryDependencies) { (sv, deps) =>
+        // select the Specs2 version based on the Scala version
+        val versionMap = Map("2.9.1" -> "1.7.1", "2.8.2" -> "1.5" )
+        val testVersion = versionMap( sv )
+        deps :+ ( "org.specs2"      %% "specs2"             % testVersion  % "test")
+      }
     )
-  )
+
 
 }

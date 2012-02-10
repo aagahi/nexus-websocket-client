@@ -4,7 +4,6 @@ import java.util.concurrent.Executors
 
 
 import java.security.KeyStore
-import java.io._
 import java.net._
 
 import javax.net.ssl._
@@ -18,9 +17,12 @@ import org.jboss.netty.handler.codec.http._
 import org.jboss.netty.handler.codec.http.HttpMethod._
 
 import websocketx._
+import collection.mutable.{SynchronizedSet, HashSet}
 
 
 object WebSocketServer {
+  val CLOSE_STRING_MESSAGE = "CLOSE"
+  
   def bootstrap() = new ServerBootstrap(
     new NioServerSocketChannelFactory(
       Executors.newCachedThreadPool(),
@@ -31,21 +33,22 @@ object WebSocketServer {
 
   def start(){
     plainServer = bootstrap()
-    plainServer.setPipelineFactory( new WebSocketServerPipelineFactory( false ) )
+    plainServer.setPipelineFactory( new WebSocketServerPipelineFactory( new WebSocketServerHandler( false ) ) )
     plainServer.bind(new InetSocketAddress( "0.0.0.0", 8080 ))
 
     secureServer = bootstrap()
-    secureServer.setPipelineFactory( new WebSocketServerPipelineFactory( true ) )
+    secureServer.setPipelineFactory( new WebSocketServerPipelineFactory( new WebSocketServerHandler( true ) ) )
     secureServer.bind(new InetSocketAddress( "0.0.0.0", 8443 ))
   }
 
   def stop(){
     plainServer.releaseExternalResources()
-    plainServer = null
-
     secureServer.releaseExternalResources()
+    plainServer = null
     secureServer = null
   }
+
+
 }
 
 object SSLContextBuilder {
@@ -72,12 +75,12 @@ object SSLContextBuilder {
 }
 
 
-class WebSocketServerPipelineFactory( secure:Boolean ) extends ChannelPipelineFactory {
+class WebSocketServerPipelineFactory( handler:WebSocketServerHandler ) extends ChannelPipelineFactory {
   def getPipeline() = {
 
     val pipeline = Channels.pipeline()
 
-    if( secure ){
+    if( handler.secure ){
       val engine = SSLContextBuilder.context.createSSLEngine
       engine.setUseClientMode(false);
       pipeline.addLast("ssl", new SslHandler(engine))
@@ -87,7 +90,7 @@ class WebSocketServerPipelineFactory( secure:Boolean ) extends ChannelPipelineFa
     pipeline.addLast("aggregator", new HttpChunkAggregator(1024 * 4))
     pipeline.addLast("encoder", new HttpResponseEncoder())
 
-    pipeline.addLast("handler",  new WebSocketServerHandler( false ) )
+    pipeline.addLast("handler", handler )
     pipeline
   }
 }
@@ -95,13 +98,15 @@ class WebSocketServerPipelineFactory( secure:Boolean ) extends ChannelPipelineFa
 
 
 @ChannelHandler.Sharable
-class WebSocketServerHandler( secure:Boolean ) extends SimpleChannelUpstreamHandler {
+class WebSocketServerHandler( val secure:Boolean ) extends SimpleChannelUpstreamHandler {
   var handshaker:WebSocketServerHandshaker = _
+
 
   private def getWebSocketLocation(req: HttpRequest) = {
     val protocol = if( secure ) "wss" else "ws"
     protocol + "://"+ req.getHeader(HttpHeaders.Names.HOST) + req.getUri
   }
+
 
   override def channelDisconnected( ctx:ChannelHandlerContext , e:ChannelStateEvent ){
     ctx.getChannel.close()
@@ -123,7 +128,10 @@ class WebSocketServerHandler( secure:Boolean ) extends SimpleChannelUpstreamHand
         ctx.getChannel().write( new PongWebSocketFrame( frame.getBinaryData() ) )
 
       case frame:TextWebSocketFrame =>
-        ctx.getChannel().write( new TextWebSocketFrame( frame.getText().toLowerCase() ) )
+        frame.getText() match {
+          case WebSocketServer.CLOSE_STRING_MESSAGE => ctx.getChannel().close()
+          case text => ctx.getChannel().write( new TextWebSocketFrame( text.toLowerCase() ) )
+        }
 
 
       case _ =>

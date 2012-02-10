@@ -14,7 +14,8 @@ class TestWebSocketClient extends Specification  {
   def is =
     "Websocket client should"                                 ^
       "connect to websocket server using plain connection"    ! plainConnect ^
-      "connect to websocket server using secure connection"   ! secureConnect
+      "connect to websocket server using secure connection"   ! secureConnect ^
+      "be close notified if socket is disconnected"           ! connectionClose
 
 
   def startService {
@@ -25,46 +26,82 @@ class TestWebSocketClient extends Specification  {
   }
 
   
-  case class StringHolder( var s:Option[String] = None )
 
-  def eventHandler( holder:StringHolder, str:String ):WebSocketEventHandler = new WebSocketEventHandler {
-    override def onOpen( client:Client ) {
-      client.send( str )
-    }
+  class TestWebSocketEventHandler extends WebSocketEventHandler {
+
+    var holder:Option[String] = None
+
     override def onMessage( client:Client, text:String ){
-      holder.synchronized{
-        holder.s = Some( text )
-        holder.notify()
+      synchronized{
+        holder = Some( text )
+        notify()
       }
     }
+    
+    def waitLastMessage() = synchronized{
+      if( holder.isEmpty ) wait( 5000 )
+      holder.get
+    }
   }
-
+  
   val str = "HELLO"
 
+  // ------------------------------------------------
+  // ------------------------------------------------
+  // ------------------------------------------------
   def plainConnect = {
-    val holder = StringHolder()
 
-    val client = new Client( new URI("ws://localhost:8080/path"), Client.ConnectionOption.DEFAULT, eventHandler( holder, str ) )
-
-    holder.synchronized{
-      if( holder.s.isEmpty ) holder.wait()
+    val eventHandler = new TestWebSocketEventHandler{
+      override def onOpen( client:Client ) { client.send( str )  }
     }
+    
+    val client = new Client( new URI("ws://localhost:8080/path"), Client.ConnectionOption.DEFAULT, eventHandler )
+
+    val lastMessage = eventHandler.waitLastMessage()
     client.close()
 
-    holder.s.get === str.toLowerCase
+     lastMessage === str.toLowerCase
   }
 
+  // ------------------------------------------------
+  // ------------------------------------------------
+  // ------------------------------------------------
   def secureConnect = {
-    val holder = StringHolder()
-
-    val client = new Client( new URI("wss://localhost:8443/path"), Client.ConnectionOption.DEFAULT, eventHandler( holder, str ) )
-
-    holder.synchronized{
-      if( holder.s.isEmpty ) holder.wait()
+    val eventHandler = new TestWebSocketEventHandler{
+      override def onOpen( client:Client ) { client.send( str )  }
     }
+    val client = new Client( new URI("wss://localhost:8443/path"), Client.ConnectionOption.DEFAULT, eventHandler )
+
+    val lastMessage = eventHandler.waitLastMessage()
     client.close()
 
-    holder.s.get === str.toLowerCase
+    lastMessage === str.toLowerCase
   }
 
+
+  // ------------------------------------------------
+  // ------------------------------------------------
+  // ------------------------------------------------
+  def connectionClose = {
+    val eventHandler = new TestWebSocketEventHandler{
+      var isClosed = false
+      override def onOpen( client:Client ) { client.send( WebSocketServer.CLOSE_STRING_MESSAGE )  }
+
+      override def onClose( client:Client ) = synchronized{ isClosed = true; notify() }
+
+      def waitIsClose() = synchronized{
+        if( !isClosed ) wait( 5000 )
+        isClosed
+      }
+    }
+
+    val client = new Client( new URI("ws://localhost:8080/path"), Client.ConnectionOption.DEFAULT, eventHandler )
+
+
+    val isClosed = eventHandler.waitIsClose()
+
+    client.close()
+    isClosed must beTrue
+
+  }
 }

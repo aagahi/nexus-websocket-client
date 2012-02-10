@@ -145,6 +145,7 @@ class Client( url:URI, connectionOption:Client.ConnectionOption = Client.Connect
           if( running ){
             if( b == -1 ) {
               eventHandler.onClose( this )
+              running = false
             }
             else {
               if (b == 0x00) {

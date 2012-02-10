@@ -3,7 +3,7 @@ import sbt._
 object Dependencies {
 
   val resolutionRepos = Seq(
-    "Typesafe Repository"     at "http://repo.typesafe.com/typesafe/releases/",
+    "Maven central"           at "http://repo1.maven.org/maven2",
     "Local Maven Repository"  at "file:///Users/alag/.m2/repository/",
     ScalaToolsSnapshots
   )
@@ -19,8 +19,6 @@ object Dependencies {
   }
 
   object Test {
-    val specs2        = "org.specs2"      %% "specs2"             % "1.6.1"   % "test"
-    val specs2Scalaz  = "org.specs2"      %% "specs2-scalaz-core" % "6.0.1"   % "test"
     val slf4j         = "org.slf4j"       % "slf4j-api"           % V.slf4j   % "test"
     val logback       = "ch.qos.logback"  % "logback-classic"     % V.logback % "test"
     val junit         = "junit"           % "junit"               % "4.7"     % "test"
