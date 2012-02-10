@@ -22,7 +22,7 @@ object ProjectBuild extends Build {
     .settings(basicSettings: _*)
     .settings(
     libraryDependencies ++= Seq(
-      Compile.netty,
+      Test.netty,
       Test.junit,
       Runtime.logback
     ) )
