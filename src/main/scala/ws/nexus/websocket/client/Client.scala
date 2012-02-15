@@ -150,10 +150,20 @@ class Client( url:URI, connectionOption:Client.ConnectionOption = Client.Connect
             else {
               if (b == 0x00) {
                 val text = decodeTextFrame()
-                eventHandler.onMessage( this, text )
+                try {
+                  eventHandler.onMessage( this, text )
+                } 
+                catch {
+                  case e:Exception => eventHandler.onError( this, e )
+                }
               }
               else if( b == 0x80 ){
-                eventHandler.onMessage( this, decodeBinaryFrame() )
+                try {
+                  eventHandler.onMessage( this, decodeBinaryFrame() )
+                }
+                catch {
+                  case e:Exception => eventHandler.onError( this, e )
+                }
               }
               else {
                 throw new IOException( "Unexpected byte: " + Integer.toHexString(b) );
