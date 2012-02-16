@@ -4,6 +4,7 @@ import javax.net.ssl.{SSLSocketFactory, X509TrustManager, SSLContext}
 import java.security.cert.X509Certificate
 import java.io._
 import java.net.{URI, SocketTimeoutException, Socket}
+import collection.mutable.Queue
 
 abstract class  WebSocketEventHandler {
   def onOpen( client:Client ){}
@@ -50,7 +51,7 @@ class Client( url:URI, connectionOption:Client.ConnectionOption = Client.Connect
   var socket:Socket = _
   var input:InputStream  = _
   var running = false
-
+  val sendQueue = new Queue[String]
 
   object URIExtractor{
     def isSecure( url:URI ) =
@@ -85,16 +86,31 @@ class Client( url:URI, connectionOption:Client.ConnectionOption = Client.Connect
     socket = null
 
   }
+  
+  
   def send( message:String  ){
     if( canSendMessage() ){
-      val os = socket.getOutputStream()
-      os.write( 0x00 )
-      os.write( message.getBytes() )
-      os.write( 0xFF )
-      os.flush()
+      dequeueMessage()
+      socketSend( message )
     }
+    else
+      sendQueue.enqueue( message )
   }
 
+  @inline private def dequeueMessage() {
+    if( !sendQueue.isEmpty ){
+      sendQueue.foreach( socketSend _ )
+      sendQueue.clear()
+    }    
+  }
+  
+  @inline private def socketSend( message:String ){
+    val os = socket.getOutputStream()
+    os.write( 0x00 )
+    os.write( message.getBytes() )
+    os.write( 0xFF )
+    os.flush()
+  }
 
   private def connect() {
     val URIExtractor( protocol, host, port, path ) = url
@@ -136,7 +152,7 @@ class Client( url:URI, connectionOption:Client.ConnectionOption = Client.Connect
     running = true
     try {
       connect()
-
+      dequeueMessage()
       eventHandler.onOpen( this )
 
       while( running ){

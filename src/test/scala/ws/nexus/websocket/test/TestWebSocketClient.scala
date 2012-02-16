@@ -5,6 +5,7 @@ import ws.nexus.websocket.server.WebSocketServer
 import org.specs2.specification.{Fragments, Step}
 import ws.nexus.websocket.client.{WebSocketEventHandler, Client}
 import java.net.{URI, URL}
+import collection.mutable.Queue
 
 
 class TestWebSocketClient extends Specification  {
@@ -15,6 +16,7 @@ class TestWebSocketClient extends Specification  {
     "Websocket client should"                                 ^
       "connect to websocket server using plain connection"    ! plainConnect ^
       "connect to websocket server using secure connection"   ! secureConnect ^
+      "enqueue message when connection not established and push them when connected"  ! enqueueMessageWhenNotConnected ^
       "be close notified if socket is disconnected"           ! connectionClose
 
 
@@ -29,18 +31,18 @@ class TestWebSocketClient extends Specification  {
 
   class TestWebSocketEventHandler extends WebSocketEventHandler {
 
-    var holder:Option[String] = None
+    val messageQueue = new Queue[String]
 
     override def onMessage( client:Client, text:String ){
       synchronized{
-        holder = Some( text )
+        messageQueue.enqueue( text )
         notify()
       }
     }
     
     def waitLastMessage() = synchronized{
-      if( holder.isEmpty ) wait( 5000 )
-      holder.get
+      if( messageQueue.isEmpty ) wait( 5000 )
+      messageQueue.dequeue()
     }
   }
   
@@ -78,6 +80,33 @@ class TestWebSocketClient extends Specification  {
     lastMessage === str.toLowerCase
   }
 
+  // ------------------------------------------------
+  // ------------------------------------------------
+  // ------------------------------------------------
+  def enqueueMessageWhenNotConnected = {
+    val str1 = "HELLO1"
+    val str2 = "HELLO2"
+    val eventHandler = new TestWebSocketEventHandler
+    val client = new Client( new URI("wss://localhost:8443/path"), Client.ConnectionOption.DEFAULT, eventHandler )
+    // ok we assume that network connection will occure after enqueueing message... :/
+    client.send( str1 )
+    client.send( str2 )
+
+
+    val lastMessage1 = eventHandler.waitLastMessage()
+    val lastMessage2 = eventHandler.waitLastMessage()
+
+    client.send( str )
+    val lastMessage = eventHandler.waitLastMessage()
+
+    client.close()
+
+    eventHandler.messageQueue.isEmpty must beTrue
+    client.sendQueue.isEmpty must beTrue
+    lastMessage1 === str1.toLowerCase
+    lastMessage2 === str2.toLowerCase
+    lastMessage === str.toLowerCase
+  }
 
   // ------------------------------------------------
   // ------------------------------------------------
