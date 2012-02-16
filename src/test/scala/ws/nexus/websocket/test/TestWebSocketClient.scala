@@ -102,7 +102,7 @@ class TestWebSocketClient extends Specification  {
     client.close()
 
     eventHandler.messageQueue.isEmpty must beTrue
-    client.sendQueue.isEmpty must beTrue
+    client.sendQueueSize === 0
     lastMessage1 === str1.toLowerCase
     lastMessage2 === str2.toLowerCase
     lastMessage === str.toLowerCase

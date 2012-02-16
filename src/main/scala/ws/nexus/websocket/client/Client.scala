@@ -51,7 +51,7 @@ class Client( url:URI, connectionOption:Client.ConnectionOption = Client.Connect
   var socket:Socket = _
   var input:InputStream  = _
   var running = false
-  val sendQueue = new Queue[String]
+  private val sendQueue = new Queue[String]
 
   object URIExtractor{
     def isSecure( url:URI ) =
@@ -94,14 +94,20 @@ class Client( url:URI, connectionOption:Client.ConnectionOption = Client.Connect
       socketSend( message )
     }
     else
-      sendQueue.enqueue( message )
+      sendQueue.synchronized{
+        sendQueue.enqueue( message )
+      }
   }
 
+  def sendQueueSize = synchronized{ sendQueue.size }
+
   @inline private def dequeueMessage() {
-    if( !sendQueue.isEmpty ){
-      sendQueue.foreach( socketSend _ )
-      sendQueue.clear()
-    }    
+    sendQueue.synchronized{
+      if( !sendQueue.isEmpty ){
+        sendQueue.foreach( socketSend _ )
+        sendQueue.clear()
+      }
+    }
   }
   
   @inline private def socketSend( message:String ){
