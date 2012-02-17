@@ -22,9 +22,7 @@ object ProjectBuild extends Build {
     .settings(basicSettings: _*)
     .settings(
     libraryDependencies ++= Seq(
-      Test.netty,
-      Test.junit,
-      Runtime.logback
+      Test.netty
     ) )
     .settings(
       libraryDependencies <<= (scalaVersion, libraryDependencies) { (sv, deps) =>
