@@ -4,15 +4,19 @@ import javax.net.ssl.{SSLSocketFactory, X509TrustManager, SSLContext}
 import java.security.cert.X509Certificate
 import java.io._
 import java.net.{URI, SocketTimeoutException, Socket}
-import collection.mutable.Queue
+import collection.mutable.{SynchronizedQueue}
+import java.util.concurrent.atomic.AtomicBoolean
 
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 abstract class  WebSocketEventHandler {
   def onOpen( client:Client ){}
 
   def onMessage( client:Client, message:String){}
   def onMessage(  client:Client, message:Array[Byte]){}
 
-  def onError(  client:Client, e:Exception ){}
+  def onError(  client:Client, e:Throwable ){}
 
   def onClose(  client:Client ){}
   def onStop(  client:Client  ){}
@@ -20,7 +24,8 @@ abstract class  WebSocketEventHandler {
 }
 
 
-
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 object Client {
 
 
@@ -46,207 +51,263 @@ object Client {
   case class ConnectionOption( tcpNoDelay:Boolean, soTimeout:Int, sslSocketFactory: () => SSLSocketFactory)
 
 }
-class Client( url:URI, connectionOption:Client.ConnectionOption = Client.ConnectionOption.DEFAULT, eventHandler:WebSocketEventHandler ) extends Thread {
 
-  var socket:Socket = _
-  var input:InputStream  = _
-  var running = false
-  private val sendQueue = new Queue[String]
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-  object URIExtractor{
-    def isSecure( url:URI ) =
-      url.getScheme match {
-        case "ws" => false
-        case "wss" => true
-      }
+class Client( eventHandler:WebSocketEventHandler ) {
 
-    def port( url:URI ) = {
-      url.getPort match {
-        case -1 => if( isSecure( url ) ) 443 else 80
-        case p => p
-      }
-    }
-    def unapply( url:URI ) = {
-      Some( ( url.getScheme, url.getHost, port( url ), url.getPath) )
-    }
+  private val sendQueue = new SynchronizedQueue[String]
+
+  var clientThread:ClientThread = _
+
+  var url:URI = _
+  var connectionOption:Client.ConnectionOption = Client.ConnectionOption.DEFAULT
+  // --------------------------------------------------------
+  def connect( url:URI, connectionOption:Client.ConnectionOption = Client.ConnectionOption.DEFAULT ){
+    this.url = url
+    this.connectionOption = connectionOption
+    clientThread = new ClientThread( url, connectionOption, eventHandler )
+    clientThread.start()
   }
-
-  def isClosed() =
-    if( socket != null ) socket.isClosed()
-    else true
-
-
-  def canSendMessage() =
-    !isClosed() && socket != null && !socket.isOutputShutdown()
-
-
-  def close() {
-    running = false
-    socket.close()
-    socket = null
-
+  // --------------------------------------------------------
+  def reconnect(){
+    if( url != null ) connect( url, connectionOption )
   }
-  
-  
+  // --------------------------------------------------------
+  def isRunning = clientThread != null && clientThread.running.get && clientThread.isAlive
+
+  // --------------------------------------------------------
+  def sendQueueSize = sendQueue.size
+
+  // --------------------------------------------------------
   def send( message:String  ){
-    if( canSendMessage() ){
-      dequeueMessage()
-      socketSend( message )
-    }
-    else
-      sendQueue.synchronized{
-        sendQueue.enqueue( message )
+
+    sendQueue.enqueue( message )
+
+    clientThread.synchronized{ clientThread.notify() }
+  }
+
+  // --------------------------------------------------------
+  def close(){
+    clientThread.close()
+  }
+
+
+  // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  class ClientThread( url:URI, connectionOption:Client.ConnectionOption = Client.ConnectionOption.DEFAULT, eventHandler:WebSocketEventHandler ) extends Thread {
+
+    private var socket:Socket = _
+    private var input:InputStream  = _
+    val running = new AtomicBoolean( true )
+
+    private final val MAX_WAIT = 1000*30
+
+    // --------------------------------------------------------
+   object URIExtractor{
+      def isSecure( url:URI ) =
+        url.getScheme match {
+          case "ws" => false
+          case "wss" => true
+        }
+
+      def port( url:URI ) = {
+        url.getPort match {
+          case -1 => if( isSecure( url ) ) 443 else 80
+          case p => p
+        }
       }
-  }
-
-  def sendQueueSize = synchronized{ sendQueue.size }
-
-  @inline private def dequeueMessage() {
-    sendQueue.synchronized{
-      if( !sendQueue.isEmpty ){
-        sendQueue.foreach( socketSend _ )
-        sendQueue.clear()
+      def unapply( url:URI ) = {
+        Some( ( url.getScheme, url.getHost, port( url ), url.getPath) )
       }
     }
-  }
-  
-  @inline private def socketSend( message:String ){
-    val os = socket.getOutputStream()
-    os.write( 0x00 )
-    os.write( message.getBytes() )
-    os.write( 0xFF )
-    os.flush()
-  }
 
-  private def connect() {
-    val URIExtractor( protocol, host, port, path ) = url
+    // --------------------------------------------------------
+    private def connect() {
+      val URIExtractor( protocol, host, port, path ) = url
 
-    if( protocol == "ws" )
-      socket = new Socket( host, port )
-    else
-      socket = connectionOption.sslSocketFactory().createSocket( host, port )
+      if( protocol == "ws" )
+        socket = new Socket( host, port )
+      else
+        socket = connectionOption.sslSocketFactory().createSocket( host, port )
 
 
-    socket.setTcpNoDelay( connectionOption.tcpNoDelay )
-    socket.setSoTimeout( connectionOption.soTimeout )
+      socket.setKeepAlive( true )
+      socket.setTcpNoDelay( connectionOption.tcpNoDelay )
+      socket.setSoTimeout( connectionOption.soTimeout )
 
-    input = socket.getInputStream()
+      input = socket.getInputStream()
 
-    val handshake = "GET " + path + " HTTP/1.1\r\n" +
-                    "Upgrade: WebSocket\r\n" +
-                    "Connection: Upgrade\r\n" +
-                    "Host: " + host + "\r\n" +
-                    "Origin: http://" + host +
-                    "\r\n" +
-                    "\r\n"
+      val handshake = "GET " + path + " HTTP/1.1\r\n" +
+        "Upgrade: WebSocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Host: " + host + "\r\n" +
+        "Origin: http://" + host +
+        "\r\n" +
+        "\r\n"
 
-    val os = socket.getOutputStream()
-    os.write( handshake.getBytes() )
-    os.flush()
+      val os = socket.getOutputStream()
+      os.write( handshake.getBytes() )
+      os.flush()
 
-    val reader = new BufferedReader( new InputStreamReader(input) )
-    val line = reader.readLine()
+      val reader = new BufferedReader( new InputStreamReader(input) )
+      val line = reader.readLine()
 
-    if ( !line.equals("HTTP/1.1 101 Web Socket Protocol Handshake") ){
-      throw new IOException("unable to connect to server")
+      if ( !line.equals("HTTP/1.1 101 Web Socket Protocol Handshake") ){
+        throw new IOException("unable to connect to server")
+      }
     }
-  }
+
+    // --------------------------------------------------------
+    def socketSend( message:String ){
+      val os = socket.getOutputStream()
+      os.write( 0x00 )
+      os.write( message.getBytes() )
+      os.write( 0xFF )
+      os.flush()
+    }
+    def close() {
+
+      running.set(false)
+      try{
+        synchronized( notify() )
+        if( socket != null ) socket.close()
+        if( input != null ) input.close()
+        clientThread.interrupt()
+      }
+      catch{
+        case e => e.printStackTrace()
+      }
+      socket = null
+      input = null
+    }
 
 
+    // --------------------------------------------------------
+    override def run(){
+      running.set( true )
+      try {
+        connect()
+        eventHandler.onOpen( Client.this )
+        socket.setSoTimeout( 5 )
 
-  override def run(){
-    running = true
-    try {
-      connect()
-      dequeueMessage()
-      eventHandler.onOpen( this )
+        var waitTime = 0
+        
+        while( running.get ){
+          try {
 
-      while( running ){
-        try{
-          val b = input.read()
-          if( running ){
-            if( b == -1 ) {
-              eventHandler.onClose( this )
-              running = false
+            while( !sendQueue.isEmpty ){
+              socketSend( sendQueue.head )
+              sendQueue.dequeue()
             }
-            else {
-              if (b == 0x00) {
-                val text = decodeTextFrame()
-                try {
-                  eventHandler.onMessage( this, text )
-                } 
-                catch {
-                  case e:Exception => eventHandler.onError( this, e )
-                }
-              }
-              else if( b == 0x80 ){
-                try {
-                  eventHandler.onMessage( this, decodeBinaryFrame() )
-                }
-                catch {
-                  case e:Exception => eventHandler.onError( this, e )
-                }
+
+            
+            waitTime = if( waitTime >= MAX_WAIT ) MAX_WAIT else waitTime*2+1
+            
+            synchronized{ wait( waitTime ) }
+            if( running.get ){
+
+              val b = input.read()
+              waitTime = 0
+
+              if( b == -1 ) {
+                running.set( false )
+
+                eventHandler.onClose( Client.this )
               }
               else {
-                throw new IOException( "Unexpected byte: " + Integer.toHexString(b) );
+                if (b == 0x00) {
+                  val text = decodeTextFrame()
+                  try {
+                    eventHandler.onMessage( Client.this, text )
+                  }
+                  catch {
+                    case e => eventHandler.onError( Client.this, e )
+                  }
+                }
+                else if( b == 0x80 ){
+                  val bin = decodeBinaryFrame()
+                  try {
+                    eventHandler.onMessage( Client.this, bin )
+                  }
+                  catch {
+                    case e => eventHandler.onError( Client.this, e )
+                  }
+                }
+                else {
+                  throw new IOException( "Unexpected byte: " + Integer.toHexString(b) );
+                }
               }
             }
+
+
+
+            
           }
-        }
-        // workaround for android issu => close on socket doesnt throw ex.
-        catch{
-          case e:SocketTimeoutException =>
-        }
-      } // while
+          catch{
+            // workaround for android issu => close on socket doesnt throw ex.
+            case e:SocketTimeoutException =>
 
-    }
-    catch {
-      case e:Exception =>
-        eventHandler.onError( this, e )
-    }
+            // interrupt to send
+            case e:InterruptedException =>
 
-    eventHandler.onStop( this )
+          }
+        } // while
 
-
-  }
-
-
-  def decodeBinaryFrame() = {
-    var frameSize = 0L
-    var lengthFieldSize = 0
-    var b:Byte = 0
-    do {
-      b = input.read().toByte
-      frameSize <<= 7
-      frameSize |= b & 0x7f
-      lengthFieldSize += 1
-      if (lengthFieldSize > 8) {
-        throw new IOException( "Unexpected lengthFieldSize");
       }
-    }
-    while( (b & 0x80) == 0x80 )
+      catch {
+        case e =>
+          eventHandler.onError( Client.this, e )
+      }
 
-    val buffer = new Array[Byte](frameSize.toInt)
-    input.read(buffer)
-    buffer
+      eventHandler.onStop( Client.this )
+
+
+      running.set(false)
+    }
+
+    // --------------------------------------------------------
+    def decodeBinaryFrame() = {
+      var frameSize = 0L
+      var lengthFieldSize = 0
+      var b:Byte = 0
+      do {
+        b = input.read().toByte
+        frameSize <<= 7
+        frameSize |= b & 0x7f
+        lengthFieldSize += 1
+        if (lengthFieldSize > 8) {
+          throw new IOException( "Unexpected lengthFieldSize");
+        }
+      }
+      while( (b & 0x80) == 0x80 )
+
+      val buffer = new Array[Byte](frameSize.toInt)
+      input.read(buffer)
+      buffer
+    }
+
+
+
+    // --------------------------------------------------------
+    val boas = new ByteArrayOutputStream()
+    def decodeTextFrame() = {
+      boas.reset()
+      var b = 0
+      while( b != 0xFF ){
+        b = input.read()
+        if( b != 0xFF ) boas.write( b.toByte )
+      }
+
+      boas.toString()
+    }
   }
 
 
-  val boas = new ByteArrayOutputStream()
-
-  def decodeTextFrame() = {
-    boas.reset()
-    var b = 0
-    while( b != 0xFF ){
-      b = input.read()
-      if( b != 0xFF ) boas.write( b.toByte )
-    }
-
-    boas.toString()
-  }
 
 
 
-  start()
 
 }
