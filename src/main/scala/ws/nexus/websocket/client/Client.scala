@@ -74,18 +74,14 @@ class Client( eventHandler:WebSocketEventHandler ) {
   def reconnect(){
     if( url != null ) connect( url, connectionOption )
   }
-  // --------------------------------------------------------
-  def isRunning = clientThread != null && clientThread.running.get && clientThread.isAlive
 
   // --------------------------------------------------------
   def sendQueueSize = sendQueue.size
 
   // --------------------------------------------------------
   def send( message:String  ){
-
     sendQueue.enqueue( message )
-
-    clientThread.synchronized{ clientThread.notify() }
+    clientThread.sendingThread.synchronized( clientThread.sendingThread.notify() )
   }
 
   // --------------------------------------------------------
@@ -103,7 +99,6 @@ class Client( eventHandler:WebSocketEventHandler ) {
     private var input:InputStream  = _
     val running = new AtomicBoolean( true )
 
-    private final val MAX_WAIT = 1000*30
 
     // --------------------------------------------------------
    object URIExtractor{
@@ -184,67 +179,61 @@ class Client( eventHandler:WebSocketEventHandler ) {
       input = null
     }
 
+    // --------------------------------------------------------
+    lazy val sendingThread = new Thread {
+      override def run(){
+        while( running.get ){
+          if( sendQueue.isEmpty ) synchronized( wait )
+          while( !sendQueue.isEmpty ){
+            socketSend( sendQueue.head )
+            sendQueue.dequeue()
+          }
+        }
+      }
+    }
+
 
     // --------------------------------------------------------
     override def run(){
-      running.set( true )
       try {
         connect()
         eventHandler.onOpen( Client.this )
         socket.setSoTimeout( 5 )
 
-        var waitTime = 0
-        
+        sendingThread.start()
+
         while( running.get ){
           try {
+            val b = input.read()
 
-            while( !sendQueue.isEmpty ){
-              socketSend( sendQueue.head )
-              sendQueue.dequeue()
+            if( b == -1 ) {
+              running.set( false )
+              eventHandler.onClose( Client.this )
             }
-
-            
-            waitTime = if( waitTime >= MAX_WAIT ) MAX_WAIT else waitTime*2+1
-            
-            synchronized{ wait( waitTime ) }
-            if( running.get ){
-
-              val b = input.read()
-              waitTime = 0
-
-              if( b == -1 ) {
-                running.set( false )
-
-                eventHandler.onClose( Client.this )
+            else {
+              if (b == 0x00) {
+                val text = decodeTextFrame()
+                try {
+                  eventHandler.onMessage( Client.this, text )
+                }
+                catch {
+                  case e => eventHandler.onError( Client.this, e )
+                }
+              }
+              else if( b == 0x80 ){
+                val bin = decodeBinaryFrame()
+                try {
+                  eventHandler.onMessage( Client.this, bin )
+                }
+                catch {
+                  case e => eventHandler.onError( Client.this, e )
+                }
               }
               else {
-                if (b == 0x00) {
-                  val text = decodeTextFrame()
-                  try {
-                    eventHandler.onMessage( Client.this, text )
-                  }
-                  catch {
-                    case e => eventHandler.onError( Client.this, e )
-                  }
-                }
-                else if( b == 0x80 ){
-                  val bin = decodeBinaryFrame()
-                  try {
-                    eventHandler.onMessage( Client.this, bin )
-                  }
-                  catch {
-                    case e => eventHandler.onError( Client.this, e )
-                  }
-                }
-                else {
-                  throw new IOException( "Unexpected byte: " + Integer.toHexString(b) );
-                }
+                throw new IOException( "Unexpected byte: " + Integer.toHexString(b) );
               }
             }
 
-
-
-            
           }
           catch{
             // workaround for android issu => close on socket doesnt throw ex.
