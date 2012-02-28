@@ -6,3 +6,12 @@ This code is based on java classical io lib, as I had problem using nio with TLS
 and also faced some trouble using netty client implem with android (API level7 if this is related somehow).
 
 Right now nexus-websocket-client is succesfully used in [SpotMint Android Project](https://github.com/aagahi/spotmint-android).
+
+# Build
+
+Clone the project and run [sbt](https://github.com/harrah/xsbt/wiki) (0.11.x required).
+
+Publish all for all supported scala version using command:
+
+    + publish-local
+
