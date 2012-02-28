@@ -9,7 +9,7 @@ object ProjectBuild extends Build {
   lazy val basicSettings = Seq[Setting[_]](
     organization := "ws.nexus",
     name := "websocket-client",
-    version := "0.2.4",
+    version := "0.2.5",
     description := "Nexus WS client",
     scalacOptions := Seq("-deprecation", "-encoding", "utf8"),
     scalaVersion := "2.9.1",
@@ -29,7 +29,7 @@ object ProjectBuild extends Build {
         // select the Specs2 version based on the Scala version
         val versionMap = Map("2.9.1" -> "1.7.1", "2.8.2" -> "1.5" )
         val testVersion = versionMap( sv )
-        deps :+ ( "org.specs2"      %% "specs2"             % testVersion  % "test")
+        deps :+ ( "org.specs2"      %% "specs2"  % testVersion  % "test")
       }
     )
 

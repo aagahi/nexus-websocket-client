@@ -45,8 +45,8 @@ object Client {
       context.getSocketFactory()
     }
 
-    // soTimeout 500 => workaround for android issu => close on socket doesnt throw ex.
-    val DEFAULT = ConnectionOption( true, 5000, TRUST_ALL_SSL_SOCKET_FACTORY )
+    // soTimeout 30000 => workaround for android issu => close on socket doesnt throw ex.
+    val DEFAULT = ConnectionOption( true, 30000, TRUST_ALL_SSL_SOCKET_FACTORY )
   }
   case class ConnectionOption( tcpNoDelay:Boolean, soTimeout:Int, sslSocketFactory: () => SSLSocketFactory)
 
@@ -167,7 +167,7 @@ class Client( eventHandler:WebSocketEventHandler ) {
 
       running.set(false)
       try{
-        synchronized( notify() )
+        sendingThread.synchronized( sendingThread.notify() )
         if( socket != null ) socket.close()
         if( input != null ) input.close()
         clientThread.interrupt()
@@ -184,7 +184,7 @@ class Client( eventHandler:WebSocketEventHandler ) {
       override def run(){
         while( running.get ){
           if( sendQueue.isEmpty ) synchronized( wait )
-          while( !sendQueue.isEmpty ){
+          while( !sendQueue.isEmpty && running.get ){
             socketSend( sendQueue.head )
             sendQueue.dequeue()
           }
@@ -198,7 +198,6 @@ class Client( eventHandler:WebSocketEventHandler ) {
       try {
         connect()
         eventHandler.onOpen( Client.this )
-        socket.setSoTimeout( 5 )
 
         sendingThread.start()
 
