@@ -9,7 +9,7 @@ object ProjectBuild extends Build {
   lazy val basicSettings = Seq[Setting[_]](
     organization := "ws.nexus",
     name := "websocket-client",
-    version := "0.2.5",
+    version := "0.3.1",
     description := "Nexus WS client",
     scalacOptions := Seq("-deprecation", "-encoding", "utf8"),
     scalaVersion := "2.9.1",

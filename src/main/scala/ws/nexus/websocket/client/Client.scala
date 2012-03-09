@@ -64,10 +64,10 @@ class Client( eventHandler:WebSocketEventHandler ) {
   var url:URI = _
   var connectionOption:Client.ConnectionOption = Client.ConnectionOption.DEFAULT
   // --------------------------------------------------------
-  def connect( url:URI, connectionOption:Client.ConnectionOption = Client.ConnectionOption.DEFAULT ){
+  def connect( url:URI, connectionOption:Client.ConnectionOption = Client.ConnectionOption.DEFAULT, throwableLogger: Option[Throwable => Any] = None  ){
     this.url = url
     this.connectionOption = connectionOption
-    clientThread = new ClientThread( url, connectionOption, eventHandler )
+    clientThread = new ClientThread( url, eventHandler, connectionOption, throwableLogger )
     clientThread.start()
   }
   // --------------------------------------------------------
@@ -93,7 +93,9 @@ class Client( eventHandler:WebSocketEventHandler ) {
   // --------------------------------------------------------------------------
   // --------------------------------------------------------------------------
   // --------------------------------------------------------------------------
-  class ClientThread( url:URI, connectionOption:Client.ConnectionOption = Client.ConnectionOption.DEFAULT, eventHandler:WebSocketEventHandler ) extends Thread {
+  class ClientThread( url:URI, eventHandler:WebSocketEventHandler,
+                      connectionOption:Client.ConnectionOption,
+                      throwableLogger: Option[Throwable => Any] ) extends Thread {
 
     private var socket:Socket = _
     private var input:InputStream  = _
@@ -119,6 +121,19 @@ class Client( eventHandler:WebSocketEventHandler ) {
       }
     }
 
+    // --------------------------------------------------------
+    @inline private def catcher[T]( block: => T ):Option[T] = {
+      try{
+        Some( block )
+      }
+      catch{
+        case t =>
+          throwableLogger.foreach( _( t ) )
+          None
+      }
+    }
+    
+    
     // --------------------------------------------------------
     private def connect() {
       val URIExtractor( protocol, host, port, path ) = url
@@ -164,16 +179,13 @@ class Client( eventHandler:WebSocketEventHandler ) {
       os.flush()
     }
     def close() {
-
       running.set(false)
-      try{
+      catcher {
         sendingThread.synchronized( sendingThread.notify() )
+        while( sendingThread.getState != Thread.State.TERMINATED ) Thread.sleep(10)
         if( socket != null ) socket.close()
         if( input != null ) input.close()
         clientThread.interrupt()
-      }
-      catch{
-        case e => e.printStackTrace()
       }
       socket = null
       input = null
@@ -183,13 +195,15 @@ class Client( eventHandler:WebSocketEventHandler ) {
     lazy val sendingThread = new Thread {
       override def run(){
         while( running.get ){
-          if( sendQueue.isEmpty ) synchronized( wait )
-          while( !sendQueue.isEmpty && running.get ){
-            socketSend( sendQueue.head )
-            sendQueue.dequeue()
-          }
-        }
-      }
+          catcher{  
+            if( sendQueue.isEmpty ) synchronized( wait )
+            while( !sendQueue.isEmpty && running.get ){
+              socketSend( sendQueue.head )
+              sendQueue.dequeue()
+            }
+          } // catcher
+        } // while
+      } // run
     }
 
 
@@ -247,10 +261,10 @@ class Client( eventHandler:WebSocketEventHandler ) {
       }
       catch {
         case e =>
-          eventHandler.onError( Client.this, e )
+          catcher( eventHandler.onError( Client.this, e ) )
       }
 
-      eventHandler.onStop( Client.this )
+      catcher( eventHandler.onStop( Client.this ) )
 
 
       running.set(false)
@@ -292,10 +306,5 @@ class Client( eventHandler:WebSocketEventHandler ) {
       boas.toString()
     }
   }
-
-
-
-
-
 
 }
